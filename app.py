@@ -5,12 +5,23 @@ import sqlite3
 import io
 
 # --- CONFIGURAÇÃO DO BANCO DE DADOS ---
+conn = sqlite3.connect('manutencao_v2.db', check_same_thread=False)
+c = conn.cursor()
+
 def create_tables():
-    # Adicionada a coluna 'foto' (BLOB para armazenar o arquivo binário)
+    # Cria as tabelas básicas se não existirem
     c.execute('''CREATE TABLE IF NOT EXISTS manutencoes 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, curso TEXT, laboratorio TEXT, 
                   tipo TEXT, descricao TEXT, status TEXT, data_entrada TIMESTAMP, 
-                  data_saida TIMESTAMP, tempo_total TEXT, foto BLOB)''')
+                  data_saida TIMESTAMP, tempo_total TEXT)''')
+    
+    # LÓGICA DE MIGRAÇÃO: Verifica se a coluna 'foto' existe, se não, adiciona
+    c.execute("PRAGMA table_info(manutencoes)")
+    colunas = [coluna[1] for coluna in c.fetchall()]
+    if 'foto' not in colunas:
+        c.execute("ALTER TABLE manutencoes ADD COLUMN foto BLOB")
+        conn.commit()
+
     c.execute('CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, password TEXT)')
     c.execute("INSERT OR IGNORE INTO usuarios (username, password) VALUES ('Admin', '12345')")
     conn.commit()
@@ -53,7 +64,6 @@ if not st.session_state['logged_in']:
         with col1:
             curso = st.selectbox('Seu Curso', ['Odontologia', 'Fisioterapia', 'Nutrição', 'Psicologia', 'Estética', 'Gastronomia', 'Biomedicina', 'Arquitetura', 'Eng. Civil', 'Agronomia', 'ADS'])
             lab = st.text_input('Nome/Número do Laboratório')
-            # NOVO: Campo de Upload de Foto
             foto_arquivo = st.file_uploader("Anexar foto do problema (Opcional)", type=['png', 'jpg', 'jpeg'])
         with col2:
             tipo = st.selectbox('Tipo de Problema', ['Elétrica', 'Hidráulica', 'Manutenção Preventiva', 'Sanitária', 'Ar condicionado'])
@@ -62,7 +72,6 @@ if not st.session_state['logged_in']:
         enviar = st.form_submit_button('Enviar Solicitação')
         if enviar:
             if lab and desc:
-                # Converte a foto em bytes para salvar no SQLite
                 foto_bytes = foto_arquivo.read() if foto_arquivo else None
                 data_entrada = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 c.execute('''INSERT INTO manutencoes (curso, laboratorio, tipo, descricao, status, data_entrada, foto) 
@@ -74,20 +83,20 @@ if not st.session_state['logged_in']:
 else:
     if menu_tecnico == 'Baixar Manutenções':
         st.title('📋 Ordens de Serviço Pendentes')
-        df_pendentes = pd.read_sql("SELECT * FROM manutencoes WHERE status = 'Pendente'", conn)
+        # Buscamos explicitamente as colunas para evitar erros de mapeamento
+        df_pendentes = pd.read_sql("SELECT id, curso, laboratorio, tipo, descricao, status, data_entrada, foto FROM manutencoes WHERE status = 'Pendente'", conn)
+        
         if not df_pendentes.empty:
             for index, row in df_pendentes.iterrows():
                 with st.expander(f"OS #{row['id']} - {row['laboratorio']} ({row['curso']})"):
                     st.write(f"**Tipo:** {row['tipo']}")
                     st.write(f"**Descrição:** {row['descricao']}")
                     
-                    # NOVO: Exibição da Foto se ela existir
-                    if row['foto']:
+                    # Verifica se a coluna foto existe e tem conteúdo
+                    if 'foto' in row and row['foto']:
                         st.image(row['foto'], caption=f"Evidência OS #{row['id']}", width=400)
-                    else:
-                        st.info("Nenhuma foto anexada a esta solicitação.")
                         
-                    if st.button(f"Confirmar Realização #{row['id']}", key=row['id']):
+                    if st.button(f"Confirmar Realização #{row['id']}", key=f"btn_{row['id']}"):
                         data_saida_dt = datetime.now()
                         data_entrada_dt = datetime.strptime(row['data_entrada'], '%Y-%m-%d %H:%M:%S')
                         duracao = data_saida_dt - data_entrada_dt
@@ -110,15 +119,16 @@ else:
             df_counts = df_all['curso'].value_counts().reset_index()
             df_counts.columns = ['Unidade', 'Atendimentos']
             st.bar_chart(df_counts.set_index('Unidade'))
-            # Remove a coluna de foto (bytes) antes de mostrar a tabela de dados para não travar a UI
-            st.dataframe(df_all[['curso', 'laboratorio', 'tipo', 'data_entrada', 'data_saida', 'tempo_total']], use_container_width=True)
+            
+            # Mostra apenas colunas de texto/data na tabela do Streamlit
+            colunas_visiveis = [c for c in df_all.columns if c != 'foto']
+            st.dataframe(df_all[colunas_visiveis], use_container_width=True)
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                # Remove a foto também do Excel, pois arquivos binários podem corromper a planilha simples
-                df_export = df_all.drop(columns=['foto'])
+                df_export = df_all.drop(columns=['foto']) if 'foto' in df_all.columns else df_all
                 df_export.to_excel(writer, index=False, sheet_name='Relatorio')
-            st.download_button(label='📥 Exportar para Excel', data=output.getvalue(), file_name='relatorio.xlsx')
+            st.download_button(label='📥 Exportar para Excel', data=output.getvalue(), file_name='relatorio_manutencao.xlsx')
         else:
             st.warning('Sem dados concluídos.')
 
@@ -133,4 +143,4 @@ else:
                     conn.commit()
                     st.success(f'Técnico {new_user} cadastrado!')
                 except:
-                    st.error('Erro ao cadastrar.')
+                    st.error('Erro ao cadastrar ou usuário já existe.')
