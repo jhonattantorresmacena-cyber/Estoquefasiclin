@@ -5,7 +5,7 @@ import sqlite3
 import io
 
 # --- CONFIGURAÇÃO DO BANCO DE DADOS ---
-conn = sqlite3.connect('manutencao_v2.db', check_same_thread=False)
+conn = sqlite3.connect(check_same_thread=False)
 c = conn.cursor()
 
 def create_tables():
