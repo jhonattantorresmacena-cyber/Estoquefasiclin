@@ -159,8 +159,3 @@ else:
                 conn.commit()
                 st.rerun()
 ```[cite: 1]
-
-### Resumo das Soluções:
-1.  **Planilha:** A nova coluna `tecnico_responsavel` foi incluída tanto na visualização do Dashboard quanto no arquivo Excel exportado[cite: 1].
-2.  **Erro `KeyError`:** O código agora garante que a variável `user_logged` seja inicializada vazia e usa um valor padrão caso a sessão expire, eliminando o erro de tela vermelha[cite: 1].
-3.  **Segurança de Dados:** O campo de foto continua sendo excluído da exportação Excel para evitar erros de compatibilidade, mas o nome do técnico agora é um dado fixo na planilha[cite: 1].
