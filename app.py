@@ -137,11 +137,3 @@ else:
                     st.success(f'Técnico {new_user} cadastrado!')
                 except:
                     st.error('Erro ao cadastrar.')
-```[cite: 1]
-
-### O que mudou?
-*   **Armazenamento Inteligente:** O banco agora guarda a imagem como bytes (`BLOB`)[cite: 1]. Isso mantém tudo centralizado no seu arquivo `.db`.
-*   **Visualização Direta:** O técnico agora vê a imagem dentro do card da manutenção, facilitando o diagnóstico remoto[cite: 1].
-*   **Segurança no Dashboard:** Removi a coluna de fotos da tabela visual e do Excel, pois dados binários (fotos) tornariam a visualização e a planilha pesadas e ilegíveis[cite: 1].
-
-Lembre-se de **apagar o arquivo `manutencao_v2.db` antigo** antes de rodar esta nova versão!
