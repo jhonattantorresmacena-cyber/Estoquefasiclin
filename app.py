@@ -9,13 +9,11 @@ conn = sqlite3.connect('manutencao_v2.db', check_same_thread=False)
 c = conn.cursor()
 
 def create_tables():
-    # Tabela principal
     c.execute('''CREATE TABLE IF NOT EXISTS manutencoes 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, curso TEXT, laboratorio TEXT, 
                   tipo TEXT, descricao TEXT, status TEXT, data_entrada TIMESTAMP, 
                   data_saida TIMESTAMP, tempo_total TEXT)''')
     
-    # Migração Automática de Colunas (Foto e Técnico)
     c.execute("PRAGMA table_info(manutencoes)")
     colunas = [coluna[1] for coluna in c.fetchall()]
     if 'foto' not in colunas:
@@ -23,7 +21,6 @@ def create_tables():
     if 'tecnico_responsavel' not in colunas:
         c.execute("ALTER TABLE manutencoes ADD COLUMN tecnico_responsavel TEXT")
     
-    # Tabela de Usuários
     c.execute('CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, password TEXT)')
     c.execute("INSERT OR IGNORE INTO usuarios (username, password) VALUES ('Admin', '12345')")
     conn.commit()
@@ -33,7 +30,6 @@ create_tables()
 # --- INTERFACE ---
 st.set_page_config(page_title='Sistema de Manutenção Universitário', layout='wide')
 
-# Inicialização segura do estado da sessão
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 if 'user_logged' not in st.session_state:
@@ -54,7 +50,6 @@ if not st.session_state['logged_in']:
             else:
                 st.error('Credenciais inválidas')
 else:
-    # Correção do erro da imagem: Uso de .get() para evitar KeyError
     nome_usuario = st.session_state.get('user_logged', 'Usuário')
     st.sidebar.success(f'Logado como: {nome_usuario}')
     
@@ -69,7 +64,7 @@ else:
         st.session_state['user_logged'] = ""
         st.rerun()
 
-# --- CORPO PRINCIPAL (VISÃO PÚBLICA) ---
+# --- CORPO PRINCIPAL ---
 if not st.session_state['logged_in']:
     st.title('🛠️ Reportar Manutenção - Laboratórios')
     with st.form('form_aluno', clear_on_submit=True):
@@ -93,7 +88,6 @@ if not st.session_state['logged_in']:
             else:
                 st.warning('Preencha os campos obrigatórios.')
 else:
-    # --- ÁREA TÉCNICA ---
     if menu_tecnico == 'Baixar Manutenções':
         st.title('📋 OS Pendentes')
         df_p = pd.read_sql("SELECT * FROM manutencoes WHERE status = 'Pendente'", conn)
@@ -107,39 +101,45 @@ else:
                     if st.button(f"Confirmar Realização #{row['id']}", key=f"fin_{row['id']}"):
                         data_s = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         tecnico = st.session_state['user_logged']
+                        
+                        # Cálculo de tempo
+                        data_e_dt = datetime.strptime(row['data_entrada'], '%Y-%m-%d %H:%M:%S')
+                        data_s_dt = datetime.now()
+                        diff = data_s_dt - data_e_dt
+                        horas, rem = divmod(diff.total_seconds(), 3600)
+                        minutos, _ = divmod(rem, 60)
+                        tempo_total = f"{int(horas)}h {int(minutos)}min"
+                        
                         c.execute('''UPDATE manutencoes 
-                                     SET status='Realizado', data_saida=?, tecnico_responsavel=? 
-                                     WHERE id=?''', (data_s, tecnico, row['id']))
+                                     SET status='Realizado', data_saida=?, tecnico_responsavel=?, tempo_total=? 
+                                     WHERE id=?''', (data_s, tecnico, tempo_total, row['id']))
                         conn.commit()
                         st.success("OS Finalizada!")
                         st.rerun()
         else:
-            st.info('Nenhuma pendência encontrada.')
+            st.info('Nenhuma pendência.')
 
     elif menu_tecnico == 'Dashboard':
         st.title('📊 Relatório de Gestão')
         df_all = pd.read_sql("SELECT * FROM manutencoes WHERE status = 'Realizado'", conn)
         if not df_all.empty:
-            st.subheader('Desempenho por Unidade')
+            st.subheader('Atendimentos por Unidade')
             st.bar_chart(df_all['curso'].value_counts())
             
-            # Exibição da Tabela com a nova coluna de Técnico
-            col_ver = ['id', 'curso', 'laboratorio', 'tipo', 'data_entrada', 'data_saida', 'tecnico_responsavel']
-            st.dataframe(df_all[col_ver], use_container_width=True)
+            st.dataframe(df_all.drop(columns=['foto'], errors='ignore'), use_container_width=True)
             
-            # Exportação com Técnico Responsável
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_export = df_all.drop(columns=['foto'], errors='ignore')
                 df_export.to_excel(writer, index=False, sheet_name='Relatorio')
-            st.download_button('📥 Exportar Planilha (Rastreabilidade)', output.getvalue(), 'relatorio_manutencao.xlsx')
+            st.download_button('📥 Baixar Planilha Completa (Rastreabilidade)', output.getvalue(), 'relatorio_gestao.xlsx')
         else:
-            st.warning('Sem manutenções concluídas para gerar relatório.')
+            st.warning('Sem manutenções concluídas.')
 
     elif menu_tecnico == 'Gestão de Usuários':
-        st.title('👥 Gestão de Equipe')
+        st.title('👥 Gestão de Equipe (Apenas Admin)')
         with st.form('cad_tec'):
-            n_user = st.text_input('Novo Técnico')
+            n_user = st.text_input('Login do Novo Técnico')
             n_pw = st.text_input('Senha', type='password')
             if st.form_submit_button('Cadastrar'):
                 try:
@@ -147,15 +147,15 @@ else:
                     conn.commit()
                     st.success(f'Técnico {n_user} cadastrado!')
                     st.rerun()
-                except: st.error('Erro ao cadastrar.')
+                except: st.error('Erro ao cadastrar ou usuário já existe.')
 
-        st.subheader("Técnicos do Sistema")
+        st.subheader("Lista de Técnicos Ativos")
         users_db = pd.read_sql("SELECT username FROM usuarios", conn)
         for u in users_db['username']:
             c1, c2 = st.columns([3, 1])
             c1.write(f"👤 {u}")
-            if u != 'Admin' and c2.button('Excluir', key=f'del_{u}'):
-                c.execute("DELETE FROM usuarios WHERE username = ?", (u,))
-                conn.commit()
-                st.rerun()
-```[cite: 1]
+            if u != 'Admin':
+                if c2.button('Excluir', key=f'del_{u}'):
+                    c.execute("DELETE FROM usuarios WHERE username = ?", (u,))
+                    conn.commit()
+                    st.rerun()
