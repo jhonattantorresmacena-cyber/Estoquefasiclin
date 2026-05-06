@@ -53,9 +53,11 @@ else:
     nome_usuario = st.session_state.get('user_logged', 'Usuário')
     st.sidebar.success(f'Logado como: {nome_usuario}')
     
-    opcoes_menu = ['Baixar Manutenções', 'Dashboard']
+    # Lógica de Menu por Perfil[cite: 1]
     if nome_usuario == 'Admin':
-        opcoes_menu.append('Gestão de Usuários')
+        opcoes_menu = ['Baixar Manutenções', 'Dashboard', 'Gestão de Usuários']
+    else:
+        opcoes_menu = ['Baixar Manutenções'] # Equipe técnica só vê este item[cite: 1]
     
     menu_tecnico = st.sidebar.radio('Navegação Técnica', opcoes_menu)
     
@@ -102,7 +104,6 @@ else:
                         data_s = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         tecnico = st.session_state['user_logged']
                         
-                        # Cálculo de tempo
                         data_e_dt = datetime.strptime(row['data_entrada'], '%Y-%m-%d %H:%M:%S')
                         data_s_dt = datetime.now()
                         diff = data_s_dt - data_e_dt
@@ -117,27 +118,26 @@ else:
                         st.success("OS Finalizada!")
                         st.rerun()
         else:
-            st.info('Nenhuma pendência.')
+            st.info('Nenhuma pendência encontrada.')
 
     elif menu_tecnico == 'Dashboard':
-        st.title('📊 Relatório de Gestão')
+        st.title('📊 Relatório de Gestão (Admin)')
         df_all = pd.read_sql("SELECT * FROM manutencoes WHERE status = 'Realizado'", conn)
         if not df_all.empty:
             st.subheader('Atendimentos por Unidade')
             st.bar_chart(df_all['curso'].value_counts())
-            
             st.dataframe(df_all.drop(columns=['foto'], errors='ignore'), use_container_width=True)
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_export = df_all.drop(columns=['foto'], errors='ignore')
                 df_export.to_excel(writer, index=False, sheet_name='Relatorio')
-            st.download_button('📥 Baixar Planilha Completa (Rastreabilidade)', output.getvalue(), 'relatorio_gestao.xlsx')
+            st.download_button('📥 Baixar Planilha Completa', output.getvalue(), 'relatorio_gestao.xlsx')
         else:
             st.warning('Sem manutenções concluídas.')
 
     elif menu_tecnico == 'Gestão de Usuários':
-        st.title('👥 Gestão de Equipe (Apenas Admin)')
+        st.title('👥 Gestão de Equipe (Admin)')
         with st.form('cad_tec'):
             n_user = st.text_input('Login do Novo Técnico')
             n_pw = st.text_input('Senha', type='password')
@@ -149,7 +149,7 @@ else:
                     st.rerun()
                 except: st.error('Erro ao cadastrar ou usuário já existe.')
 
-        st.subheader("Lista de Técnicos Ativos")
+        st.subheader("Técnicos Ativos")
         users_db = pd.read_sql("SELECT username FROM usuarios", conn)
         for u in users_db['username']:
             c1, c2 = st.columns([3, 1])
