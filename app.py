@@ -5,9 +5,6 @@ import sqlite3
 import io
 
 # --- CONFIGURAÇÃO DO BANCO DE DADOS ---
-conn = sqlite3.connect(check_same_thread=False)
-c = conn.cursor()
-
 def create_tables():
     # Adicionada a coluna 'foto' (BLOB para armazenar o arquivo binário)
     c.execute('''CREATE TABLE IF NOT EXISTS manutencoes 
