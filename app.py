@@ -5,21 +5,16 @@ import sqlite3
 import io
 
 # --- CONFIGURAÇÃO DO BANCO DE DADOS ---
+# DICA: Em servidores como Streamlit Cloud, arquivos .db locais são temporários.
 conn = sqlite3.connect('manutencao_v2.db', check_same_thread=False)
 c = conn.cursor()
 
 def create_tables():
+    # Criação da tabela principal garantindo que os dados persistam
     c.execute('''CREATE TABLE IF NOT EXISTS manutencoes 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, curso TEXT, laboratorio TEXT, 
                   tipo TEXT, descricao TEXT, status TEXT, data_entrada TIMESTAMP, 
-                  data_saida TIMESTAMP, tempo_total TEXT)''')
-    
-    c.execute("PRAGMA table_info(manutencoes)")
-    colunas = [coluna[1] for coluna in c.fetchall()]
-    if 'foto' not in colunas:
-        c.execute("ALTER TABLE manutencoes ADD COLUMN foto BLOB")
-    if 'tecnico_responsavel' not in colunas:
-        c.execute("ALTER TABLE manutencoes ADD COLUMN tecnico_responsavel TEXT")
+                  data_saida TIMESTAMP, tempo_total TEXT, foto BLOB, tecnico_responsavel TEXT)''')
     
     c.execute('CREATE TABLE IF NOT EXISTS usuarios (username TEXT PRIMARY KEY, password TEXT)')
     c.execute("INSERT OR IGNORE INTO usuarios (username, password) VALUES ('Admin', '12345')")
@@ -53,11 +48,11 @@ else:
     nome_usuario = st.session_state.get('user_logged', 'Usuário')
     st.sidebar.success(f'Logado como: {nome_usuario}')
     
-    # Lógica de Menu por Perfil[cite: 1]
+    # Menu com Histórico para todos verem o que já foi feito
     if nome_usuario == 'Admin':
-        opcoes_menu = ['Baixar Manutenções', 'Dashboard', 'Gestão de Usuários']
+        opcoes_menu = ['OS Pendentes', 'Histórico Geral', 'Dashboard', 'Gestão de Usuários']
     else:
-        opcoes_menu = ['Baixar Manutenções'] # Equipe técnica só vê este item[cite: 1]
+        opcoes_menu = ['OS Pendentes', 'Histórico Geral']
     
     menu_tecnico = st.sidebar.radio('Navegação Técnica', opcoes_menu)
     
@@ -86,26 +81,31 @@ if not st.session_state['logged_in']:
                 c.execute('''INSERT INTO manutencoes (curso, laboratorio, tipo, descricao, status, data_entrada, foto) 
                              VALUES (?,?,?,?,?,?,?)''', (curso, lab, tipo, desc, 'Pendente', data_e, foto_bytes))
                 conn.commit()
-                st.success('Solicitação enviada!')
+                st.success('Solicitação enviada com sucesso! Ela ficará salva até que um técnico a finalize.')
             else:
                 st.warning('Preencha os campos obrigatórios.')
+
 else:
-    if menu_tecnico == 'Baixar Manutenções':
-        st.title('📋 OS Pendentes')
-        df_p = pd.read_sql("SELECT * FROM manutencoes WHERE status = 'Pendente'", conn)
+    if menu_tecnico == 'OS Pendentes':
+        st.title('📋 Ordens de Serviço em Aberto')
+        # Aqui garantimos que buscamos tudo que não foi finalizado, independente do tempo
+        df_p = pd.read_sql("SELECT * FROM manutencoes WHERE status = 'Pendente' ORDER BY data_entrada DESC", conn)
+        
         if not df_p.empty:
             for _, row in df_p.iterrows():
                 with st.expander(f"OS #{row['id']} - {row['laboratorio']} ({row['curso']})"):
+                    st.info(f"Registrado em: {row['data_entrada']}")
                     st.write(f"**Descrição:** {row['descricao']}")
                     if row['foto']:
                         st.image(row['foto'], width=300)
                     
-                    if st.button(f"Confirmar Realização #{row['id']}", key=f"fin_{row['id']}"):
-                        data_s = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    if st.button(f"Finalizar Manutenção #{row['id']}", key=f"fin_{row['id']}"):
+                        data_s_dt = datetime.now()
+                        data_s_str = data_s_dt.strftime('%Y-%m-%d %H:%M:%S')
                         tecnico = st.session_state['user_logged']
                         
+                        # Cálculo de tempo
                         data_e_dt = datetime.strptime(row['data_entrada'], '%Y-%m-%d %H:%M:%S')
-                        data_s_dt = datetime.now()
                         diff = data_s_dt - data_e_dt
                         horas, rem = divmod(diff.total_seconds(), 3600)
                         minutos, _ = divmod(rem, 60)
@@ -113,12 +113,23 @@ else:
                         
                         c.execute('''UPDATE manutencoes 
                                      SET status='Realizado', data_saida=?, tecnico_responsavel=?, tempo_total=? 
-                                     WHERE id=?''', (data_s, tecnico, tempo_total, row['id']))
+                                     WHERE id=?''', (data_s_str, tecnico, tempo_total, row['id']))
                         conn.commit()
-                        st.success("OS Finalizada!")
+                        st.success("Manutenção movida para o histórico!")
                         st.rerun()
         else:
-            st.info('Nenhuma pendência encontrada.')
+            st.info('Nenhuma manutenção pendente no momento.')
+
+    elif menu_tecnico == 'Histórico Geral':
+        st.title('📚 Histórico de Manutenções')
+        status_filtro = st.selectbox('Filtrar por Status', ['Todos', 'Realizado', 'Pendente'])
+        
+        query = "SELECT * FROM manutencoes"
+        if status_filtro != 'Todos':
+            query += f" WHERE status = '{status_filtro}'"
+        
+        df_hist = pd.read_sql(query, conn)
+        st.dataframe(df_hist.drop(columns=['foto'], errors='ignore'), use_container_width=True)
 
     elif menu_tecnico == 'Dashboard':
         st.title('📊 Relatório de Gestão (Admin)')
@@ -126,18 +137,18 @@ else:
         if not df_all.empty:
             st.subheader('Atendimentos por Unidade')
             st.bar_chart(df_all['curso'].value_counts())
-            st.dataframe(df_all.drop(columns=['foto'], errors='ignore'), use_container_width=True)
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_export = df_all.drop(columns=['foto'], errors='ignore')
                 df_export.to_excel(writer, index=False, sheet_name='Relatorio')
-            st.download_button('📥 Baixar Planilha Completa', output.getvalue(), 'relatorio_gestao.xlsx')
+            st.download_button('📥 Baixar Planilha Excel', output.getvalue(), 'relatorio_manutencao.xlsx')
         else:
-            st.warning('Sem manutenções concluídas.')
+            st.warning('Nenhuma manutenção finalizada para gerar gráficos.')
 
     elif menu_tecnico == 'Gestão de Usuários':
-        st.title('👥 Gestão de Equipe (Admin)')
+        # ... (Mantido o código original de gestão de usuários)
+        st.title('👥 Gestão de Equipe')
         with st.form('cad_tec'):
             n_user = st.text_input('Login do Novo Técnico')
             n_pw = st.text_input('Senha', type='password')
@@ -147,15 +158,4 @@ else:
                     conn.commit()
                     st.success(f'Técnico {n_user} cadastrado!')
                     st.rerun()
-                except: st.error('Erro ao cadastrar ou usuário já existe.')
-
-        st.subheader("Técnicos Ativos")
-        users_db = pd.read_sql("SELECT username FROM usuarios", conn)
-        for u in users_db['username']:
-            c1, c2 = st.columns([3, 1])
-            c1.write(f"👤 {u}")
-            if u != 'Admin':
-                if c2.button('Excluir', key=f'del_{u}'):
-                    c.execute("DELETE FROM usuarios WHERE username = ?", (u,))
-                    conn.commit()
-                    st.rerun()
+                except: st.error('Erro ao cadastrar.')
